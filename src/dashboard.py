@@ -752,7 +752,7 @@ with tab4:
         return pd.DataFrame(rows)
 
     sacc = season_accuracy(history_df)
-    sacc["season_label"] = sacc["season"].apply(lambda s: f"20{s[:2]}-{s[2:]}")
+    sacc["season_label"] = sacc["season"].apply(lambda s: f"20{str(s)[:2]}-{str(s)[2:]}")
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(
         x=sacc["season_label"], y=sacc["accuracy"],
