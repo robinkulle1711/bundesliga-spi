@@ -1,68 +1,184 @@
-# Bundesliga Prediction Model (SPI-Style)
+# Bundesliga SPI — Prediction Model
 
-A FiveThirtyEight-style Soccer Power Index (SPI) prediction model for the Bundesliga, built with Python and Streamlit.
+A FiveThirtyEight-style Soccer Power Index for the Bundesliga.
+Separate attack and defense ratings per team, Poisson match predictions,
+interactive Streamlit dashboard.
 
-## What this does
+**Live app:** https://bundesliga-spi.streamlit.app
 
-- Calculates team strength ratings using an Elo-based system trained on 5 seasons of historical Bundesliga data
-- Predicts match outcomes (win/draw/loss probabilities and expected goals)
-- Displays results in an interactive Streamlit dashboard
+---
 
-## Project structure
+## What it does
 
-```
-├── data/
-│   ├── raw/          # Downloaded CSV files from football-data.co.uk
-│   ├── processed/    # Cleaned and standardized data
-│   └── predictions/  # Model output files
-├── src/
-│   ├── download_data.py      # Fetch historical data
-│   ├── data_prep.py          # Clean and standardize
-│   ├── elo_model.py          # Elo rating system
-│   ├── calculate_ratings.py  # Run ratings over history
-│   ├── predict_matches.py    # Generate predictions
-│   ├── get_fixtures.py       # Fetch upcoming fixtures
-│   └── dashboard.py          # Streamlit app
-├── notebooks/        # Exploration and validation notebooks
-├── docs/             # Methodology and documentation
-├── tests/            # Unit tests
-├── requirements.txt
-└── README.md
-```
+- Rates every Bundesliga team with separate **attack** and **defense** parameters
+- Predicts upcoming match outcomes: win/draw/loss probabilities + expected goals
+- Tracks how ratings evolve over 6 seasons (2020-21 → 2025-26)
+- Scores model accuracy with Brier score (0.600 vs 0.649 naive baseline)
 
-## Setup
+---
+
+## How to run it locally
+
+### 1. Open the project in VS Code
+
+- **File → Open Folder** → select `C:\Users\r.kulle\Coding\Soccer`
+- Open the terminal: **Terminal → New Terminal** (`Ctrl + `` ` ``)
+- You should see: `PS C:\Users\r.kulle\Coding\Soccer>`
+
+### 2. Install dependencies (first time only)
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Usage
+### 3. Start the dashboard
 
 ```bash
-# 1. Download historical data
-python src/download_data.py
-
-# 2. Clean and prepare data
-python src/data_prep.py
-
-# 3. Calculate ratings
-python src/calculate_ratings.py
-
-# 4. Generate predictions
-python src/predict_matches.py
-
-# 5. Launch dashboard
-streamlit run src/dashboard.py
+python -m streamlit run src/dashboard.py
 ```
 
-## Data source
+Streamlit prints a URL and opens your browser automatically.
+Stop it with `Ctrl + C` in the terminal.
 
-Historical match results from [football-data.co.uk](https://www.football-data.co.uk/germanm.php).
+### 4. Refreshing data after a matchday
 
-## Methodology
+Run these in order:
 
-See [docs/methodology_notes.md](docs/methodology_notes.md) for details on the Elo rating system and prediction formulas.
+```bash
+python src/download_data.py      # download new match results
+python src/get_fixtures.py       # download next matchday fixtures
+python src/data_prep.py          # clean and merge all data
+python src/calculate_ratings.py  # run the model, update ratings
+python src/predict_matches.py    # generate predictions
+```
+
+Then restart Streamlit (or clear cache via the ☰ menu → Clear cache).
+
+---
+
+## Saturday matchday workflow
+
+```
+1. Matchday finishes (Saturday night)
+2. Open VS Code terminal
+3. Run the 5 pipeline commands above
+4. git add .
+5. git commit -m "Matchday XX update"
+6. git push                   ← live site updates in ~60 seconds
+```
+
+---
+
+## What each file does
+
+### src/ — all the code
+
+| File | What it does | When to run it |
+|------|-------------|----------------|
+| `download_data.py` | Downloads season CSVs from football-data.co.uk | After new matchday results |
+| `get_fixtures.py` | Downloads next matchday fixtures | Same time as above |
+| `data_prep.py` | Cleans and merges raw CSVs into `matches_clean.csv` | After downloading |
+| `attack_defense_model.py` | The model math (never run directly — imported by others) | Never |
+| `elo_model.py` | Old Elo model, kept for reference and Brier comparison | Never |
+| `model_config.py` | Stores model parameters (edit here to change them) | Never run — just edit |
+| `calculate_ratings.py` | Replays all matches through the model, writes rating CSVs | After data_prep.py |
+| `predict_matches.py` | Generates predictions for upcoming fixtures | After calculate_ratings.py |
+| `tune_params.py` | Grid search to find optimal parameters | Only when experimenting |
+| `dashboard.py` | The Streamlit app — reads CSVs and shows everything | Always last |
+
+### data/ — all the data
+
+```
+data/
+├── raw/                        # Downloaded directly from football-data.co.uk
+│   ├── D1_2021.csv             # 2020-21 season results
+│   ├── D1_2122.csv             # 2021-22 season results
+│   ├── D1_2223.csv             # 2022-23 season results
+│   ├── D1_2324.csv             # 2023-24 season results
+│   ├── D1_2425.csv             # 2024-25 season results
+│   ├── D1_2526.csv             # 2025-26 season results (current)
+│   └── upcoming_fixtures.csv   # Next matchday (from get_fixtures.py)
+│
+├── processed/                  # Generated by the pipeline — don't edit manually
+│   ├── matches_clean.csv       # All seasons merged and cleaned
+│   ├── current_ratings.csv     # Latest attack/defense/power per team
+│   └── team_ratings_history.csv  # Rating after every match (for evolution chart)
+│
+└── predictions/
+    └── upcoming_predictions.csv  # Win/draw/loss probs for next matchday
+```
+
+---
+
+## How the pieces connect
+
+```
+football-data.co.uk
+        ↓
+download_data.py  →  data/raw/D1_XXXX.csv
+get_fixtures.py   →  data/raw/upcoming_fixtures.csv
+        ↓
+data_prep.py      →  data/processed/matches_clean.csv
+        ↓
+calculate_ratings.py  →  data/processed/current_ratings.csv
+  (uses attack_defense_model.py)    team_ratings_history.csv
+        ↓
+predict_matches.py    →  data/predictions/upcoming_predictions.csv
+        ↓
+dashboard.py      ←  reads all three processed/prediction CSVs
+        ↓
+browser (local or bundesliga-spi.streamlit.app)
+```
+
+**The dashboard only reads CSVs — it never runs the model.**
+Pipeline and dashboard are completely independent.
+
+---
+
+## The model
+
+**Attack/Defense ratings** — each team has two parameters:
+
+- `attack` — how much more (or less) a team scores than the league average
+- `defense` — how leaky the defense is (positive = concedes more than expected)
+- `power = attack - defense` — overall team strength
+
+**Expected goals formula:**
+```
+xg_home = 1.75 × exp(attack[home] + defense[away] + 0.05)
+xg_away = 1.39 × exp(attack[away] + defense[home])
+```
+
+**Update rule** — after each match, ratings shift based on actual vs expected goals.
+A 5-0 win produces a larger update than a 1-0 win automatically (no explicit multiplier).
+
+**Tuned parameters** (from `tune_params.py --model ad`):
+
+| Parameter | Value | Meaning |
+|-----------|-------|---------|
+| k_att | 0.02 | Attack learning rate |
+| k_def | 0.02 | Defense learning rate |
+| home_adv_log | 0.05 | Home advantage (log scale) |
+| base_home | 1.75 | League average home goals |
+| base_away | 1.39 | League average away goals |
+
+**Brier score: 0.600** (vs Elo: 0.608, vs naive baseline: 0.649)
+
+---
+
+## Deploying updates
+
+The live site at bundesliga-spi.streamlit.app runs from the `main` branch on GitHub.
+Every `git push` triggers an automatic redeploy (~60 seconds).
+
+```bash
+git add .
+git commit -m "Matchday XX update"
+git push
+```
+
+---
 
 ## Tech stack
 
-Python · pandas · numpy · scipy · Streamlit · Plotly
+Python · pandas · numpy · scipy · Streamlit · Plotly · football-data.co.uk
