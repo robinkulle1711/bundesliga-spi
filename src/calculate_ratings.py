@@ -1,24 +1,25 @@
 """
 calculate_ratings.py — Phase 3, Step 9
 
-Processes all historical matches in chronological order through the
-Attack/Defense model and saves two outputs:
+Runs both the Attack/Defense model and the Elo model over all historical
+matches and saves two outputs:
 
     data/processed/team_ratings_history.csv
         date, season, match_id, home_team, away_team,
         home_goals, away_goals, result,
         home_atk_pre, home_def_pre, away_atk_pre, away_def_pre,
-        home_atk_post, home_def_post, away_atk_post, away_def_post
+        home_atk_post, home_def_post, away_atk_post, away_def_post,
+        home_elo_pre, away_elo_pre, home_elo_post, away_elo_post
 
     data/processed/current_ratings.csv
-        team, attack, defense, power
-        (defense = raw def_ parameter; display as -defense for defensive_solidity)
+        team, attack, defense, power, elo_rating
 """
 
 import pandas as pd
 from pathlib import Path
 from attack_defense_model import AttackDefenseRating
-from model_config import AD_PARAMS
+from elo_model import EloRating
+from model_config import AD_PARAMS, ELO_PARAMS
 
 PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
 
@@ -36,58 +37,76 @@ def run() -> tuple[pd.DataFrame, pd.DataFrame]:
     print(f"Loaded {len(df)} matches ({df['date'].min().date()} to {df['date'].max().date()})")
 
     # ------------------------------------------------------------------ #
-    # Process matches                                                      #
+    # Process matches through both models                                  #
     # ------------------------------------------------------------------ #
-    model = AttackDefenseRating(**AD_PARAMS)
-    history = []
+    ad_model  = AttackDefenseRating(**AD_PARAMS)
+    elo_model = EloRating(**ELO_PARAMS)
+    history   = []
+    ref_date  = df["date"].max()
 
     for match_id, row in df.iterrows():
         home, away = row["home_team"], row["away_team"]
-        hg, ag = int(row["home_goals"]), int(row["away_goals"])
+        hg, ag     = int(row["home_goals"]), int(row["away_goals"])
 
-        # Capture PRE-match ratings (initialise new teams at 0 for logging)
-        pre_atk_h = model.get_attack(home)
-        pre_def_h = model.get_defense(home)
-        pre_atk_a = model.get_attack(away)
-        pre_def_a = model.get_defense(away)
+        # Pre-match ratings
+        pre_atk_h  = ad_model.get_attack(home)
+        pre_def_h  = ad_model.get_defense(home)
+        pre_atk_a  = ad_model.get_attack(away)
+        pre_def_a  = ad_model.get_defense(away)
+        pre_elo_h  = elo_model.get_rating(home)
+        pre_elo_a  = elo_model.get_rating(away)
 
-        post_atk_h, post_def_h, post_atk_a, post_def_a = model.update_rating(
+        # Update both models
+        post_atk_h, post_def_h, post_atk_a, post_def_a = ad_model.update_rating(
             home, away, hg, ag,
             season=row["season"],
             match_date=row["date"].date(),
         )
+        post_elo_h, post_elo_a = elo_model.update_rating(
+            home, away, hg, ag,
+            season=row["season"],
+            match_date=row["date"].date(),
+            reference_date=ref_date.date(),
+        )
 
         history.append({
-            "date":         row["date"],
-            "season":       row["season"],
-            "match_id":     match_id,
-            "home_team":    home,
-            "away_team":    away,
-            "home_goals":   hg,
-            "away_goals":   ag,
-            "result":       row["result"],
-            # Pre-match ratings
-            "home_atk_pre": round(pre_atk_h, 4),
-            "home_def_pre": round(pre_def_h, 4),
-            "away_atk_pre": round(pre_atk_a, 4),
-            "away_def_pre": round(pre_def_a, 4),
-            # Post-match ratings
-            "home_atk_post": round(post_atk_h, 4),
-            "home_def_post": round(post_def_h, 4),
-            "away_atk_post": round(post_atk_a, 4),
-            "away_def_post": round(post_def_a, 4),
+            "date":           row["date"],
+            "season":         row["season"],
+            "match_id":       match_id,
+            "home_team":      home,
+            "away_team":      away,
+            "home_goals":     hg,
+            "away_goals":     ag,
+            "result":         row["result"],
+            # AD pre
+            "home_atk_pre":   round(pre_atk_h, 4),
+            "home_def_pre":   round(pre_def_h, 4),
+            "away_atk_pre":   round(pre_atk_a, 4),
+            "away_def_pre":   round(pre_def_a, 4),
+            # AD post
+            "home_atk_post":  round(post_atk_h, 4),
+            "home_def_post":  round(post_def_h, 4),
+            "away_atk_post":  round(post_atk_a, 4),
+            "away_def_post":  round(post_def_a, 4),
+            # Elo pre / post
+            "home_elo_pre":   round(pre_elo_h, 2),
+            "away_elo_pre":   round(pre_elo_a, 2),
+            "home_elo_post":  round(post_elo_h, 2),
+            "away_elo_post":  round(post_elo_a, 2),
         })
 
     history_df = pd.DataFrame(history)
 
     # ------------------------------------------------------------------ #
-    # Current ratings snapshot                                             #
+    # Current ratings snapshot (AD sorted by power + Elo rating added)    #
     # ------------------------------------------------------------------ #
     current_df = (
-        pd.DataFrame(model.all_ratings())
+        pd.DataFrame(ad_model.all_ratings())
         .sort_values("power", ascending=False)
         .reset_index(drop=True)
     )
+    elo_map = {t: round(r, 1) for t, r in elo_model.ratings.items()}
+    current_df["elo_rating"] = current_df["team"].map(elo_map)
 
     # ------------------------------------------------------------------ #
     # Save                                                                 #
@@ -105,49 +124,16 @@ def run() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def print_summary(history_df: pd.DataFrame, current_df: pd.DataFrame) -> None:
-    print("\n=== TOP 10 TEAMS (current power) ===")
-    print(f"{'Rank':<5} {'Team':<20} {'Attack':>8} {'Defense':>8} {'Power':>8}")
+    print("\n=== TOP 10 TEAMS (AD power | Elo rating) ===")
+    print(f"{'Rank':<5} {'Team':<20} {'Attack':>8} {'Def Sol':>8} {'Power':>8} {'Elo':>7}")
     for i, row in current_df.head(10).iterrows():
-        # Display defensive_solidity = -defense (higher = better)
-        ds = -row["defense"]
         print(
             f"  {i+1:<4} {row['team']:<20} "
             f"{row['attack']:>+8.3f} "
-            f"{ds:>+8.3f} "
-            f"{row['power']:>+8.3f}"
-        )
-
-    print("\n=== FULL RATINGS TABLE (attack | def_solidity | power) ===")
-    print(f"{'Team':<20} {'Attack':>8} {'Def Sol':>8} {'Power':>8}")
-    for _, row in current_df.iterrows():
-        bar = "#" * max(0, int(row["power"] * 10 + 5))
-        print(
-            f"  {row['team']:<20} "
-            f"{row['attack']:>+8.3f} "
             f"{-row['defense']:>+8.3f} "
-            f"{row['power']:>+8.3f}  {bar}"
+            f"{row['power']:>+8.3f} "
+            f"{row['elo_rating']:>7.0f}"
         )
-
-    print(f"\n=== RATING SPREAD ===")
-    top = current_df.iloc[0]
-    bot = current_df.iloc[-1]
-    print(f"  Highest power: {top['team']} — {top['power']:+.3f}")
-    print(f"  Lowest  power: {bot['team']} — {bot['power']:+.3f}")
-    print(f"  Spread: {top['power'] - bot['power']:.3f}")
-
-    print(f"\n=== ATTACK LEADERS ===")
-    for _, r in current_df.nlargest(3, "attack").iterrows():
-        print(f"    {r['team']:<20} atk={r['attack']:+.3f}")
-    print(f"\n=== BEST DEFENSES (by defensive solidity = -def_) ===")
-    for _, r in current_df.nsmallest(3, "defense").iterrows():
-        print(f"    {r['team']:<20} def_sol={-r['defense']:+.3f}")
-
-    # Sanity: check parameter magnitudes
-    max_atk = current_df["attack"].abs().max()
-    max_def = current_df["defense"].abs().max()
-    print(f"\n=== PARAMETER STABILITY ===")
-    print(f"  Max |attack| = {max_atk:.3f}  (should be < 2.0)")
-    print(f"  Max |defense| = {max_def:.3f}  (should be < 2.0)")
 
 
 if __name__ == "__main__":
