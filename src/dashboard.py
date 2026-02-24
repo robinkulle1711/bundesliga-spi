@@ -42,10 +42,20 @@ def load_current_ratings() -> pd.DataFrame:
 
 @st.cache_data
 def load_history() -> pd.DataFrame:
-    return pd.read_csv(
+    df = pd.read_csv(
         BASE_DIR / "data/processed/team_ratings_history.csv",
         parse_dates=["date"],
     )
+    # Validate expected columns exist — catches stale cache from old CSV schema
+    required = ["home_elo_pre", "away_elo_pre", "home_elo_post", "away_elo_post"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        st.cache_data.clear()
+        df = pd.read_csv(
+            BASE_DIR / "data/processed/team_ratings_history.csv",
+            parse_dates=["date"],
+        )
+    return df
 
 
 @st.cache_data
